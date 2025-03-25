@@ -1,17 +1,14 @@
-package dynamodb_helper 
+package dynamodb_helper
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"log"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
-
 )
 
 type DynamoTable struct {
@@ -28,7 +25,7 @@ func NewDynamoTable(tableName string, regionName string) (*DynamoTable, error) {
 
 	client := dynamodb.NewFromConfig(cfg)
 	table := &dynamodb.Table{
-		Name: aws.String(tableName),
+		Name:   aws.String(tableName),
 		Client: client,
 	}
 
@@ -161,7 +158,7 @@ func (dt *DynamoTable) BuildConditionExpression(attribute string, operator strin
 
 func (dt *DynamoTable) Filter(ctx context.Context, pkName string, pk string, skName *string, sk *string, skRange *[]string, lsiName *string, lsiValue *string, projectedKeys []string) (bool, []map[string]types.AttributeValue, error) {
 	queryInput := &dynamodb.QueryInput{
-		TableName: aws.String(dt.tableName),
+		TableName:              aws.String(dt.tableName),
 		KeyConditionExpression: aws.String(fmt.Sprintf("%s = :pk_val", pkName)),
 		ExpressionAttributeValues: map[string]types.AttributeValue{
 			":pk_val": &types.AttributeValueMemberS{Value: pk},
@@ -253,50 +250,3 @@ func (dt *DynamoTable) Scan(ctx context.Context, filterExpression string, expres
 
 	return true, items, nil
 }
-
-func (dt *DynamoTable) BatchGet(ctx context.Context, keys []map[string]interface{}) (bool, []map[string]types.AttributeValue, error) {
-	if len(keys) == 0 {
-		return true, []map[string]types.AttributeValue{}, nil
-	}
-
-	var allRetrievedItems []map[string]types.AttributeValue
-	maxBatchSize := 100
-	for i := 0; i < len(keys); i += maxBatchSize {
-		end := i + maxBatchSize
-		if end > len(keys) {
-			end = len(keys)
-		}
-		batch := keys[i:end]
-
-		requestItems := map[string]types.KeysAndAttributes{
-			dt.tableName: {
-				Keys: make([]map[string]types.AttributeValue, len(batch)),
-			},
-		}
-
-		for j, key := range batch {
-			itemKey := make(map[string]types.AttributeValue)
-			for k, v := range key {
-				itemKey[k] = attributeValueFromInterface(v)
-			}
-			requestItems[dt.tableName].Keys[j] = itemKey
-		}
-
-		batchGetInput := &dynamodb.BatchGetItemInput{
-			RequestItems: requestItems,
-		}
-
-		output, err := dt.client.BatchGetItem(ctx, batchGetInput)
-		if err != nil {
-			return false, nil, fmt.Errorf("failed to batch get item: %w", err)
-		}
-
-		if len(output.Responses[dt.tableName]) > 0 {
-			allRetrievedItems = append(allRetrievedItems, output.Responses[dt.tableName]...)
-		}
-
-		// Handle unprocessed keys (if any) - This is a basic implementation
-		if len(output.UnprocessedKeys) > 0 && len(output.UnprocessedKeys[dt.tableName].Keys) > 0 {
-			log.Printf("Warning: Unprocessed keys in batch get: %v", output.UnprocessedKeys[dt.tableName].Keys)
-			// In a real application, you'd likely implement a retry mechanism
-			// for the unprocessed keys.
