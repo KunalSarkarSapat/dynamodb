@@ -198,6 +198,8 @@ func (dt *DynamoTable) Filter(ctx context.Context, pkName string, pk string, skN
 		}
 	}
 
+	fmt.Println(ctx, queryInput)
+
 	result, err := dt.client.Query(ctx, queryInput)
 	if err != nil {
 		return false, nil, fmt.Errorf("failed to query: %w", err)
