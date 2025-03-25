@@ -116,7 +116,7 @@ func (dt *DynamoTable) Delete(ctx context.Context, pkName string, pk string, skN
 	return true, nil
 }
 
-func (dt *DynamoTable) BuildConditionExpression(attribute string, operator string, value interface{}, conditionType string) (string, map[string]types.AttributeValue, error) {
+func (dt *DynamoTable) BuildConditionExpression(attribute string, operator string, value interface{}) (string, map[string]types.AttributeValue, error) {
 	var expression string
 	expressionValues := make(map[string]types.AttributeValue)
 	placeholder := fmt.Sprintf(":%s_val", strings.ReplaceAll(attribute, "#", "")) // Avoid '#' in placeholder
@@ -152,44 +152,40 @@ func (dt *DynamoTable) BuildConditionExpression(attribute string, operator strin
 
 func (dt *DynamoTable) Filter(ctx context.Context, pkName string, pk string, skName *string, sk *string, skRange *[]string, lsiName *string, lsiValue *string, projectedKeys []string) (bool, []map[string]types.AttributeValue, error) {
 	queryInput := &dynamodb.QueryInput{
-		TableName:              aws.String(dt.tableName),
-		KeyConditionExpression: aws.String(fmt.Sprintf("%s = :%s", pkName, pk)),
-		ExpressionAttributeValues: map[string]types.AttributeValue{
-			fmt.Sprintf(":%s", pkName): &types.AttributeValueMemberS{Value: pk},
-		},
-		ExpressionAttributeNames: map[string]string{
-			"#pk": pkName,
-		},
+		TableName: aws.String(dt.tableName),
 	}
+	expressionAttributeValues := make(map[string]types.AttributeValue)
+	expressionAttributeNames := make(map[string]string)
+	keyConditionExpressionParts := []string{}
+
+	expressionAttributeValues[":pk_val"] = attributeValueFromInterface(pk)
+	expressionAttributeNames["#pk"] = pkName
+	keyConditionExpressionParts = append(keyConditionExpressionParts, "#pk = :pk_val")
 
 	if skName != nil && sk != nil {
-		queryInput.KeyConditionExpression = aws.String(fmt.Sprintf("%s = :pk_val AND %s = :sk_val", pkName, *skName))
-		queryInput.ExpressionAttributeValues[":sk_val"] = &types.AttributeValueMemberS{Value: *sk}
-		queryInput.ExpressionAttributeNames["#sk"] = *skName
+		expressionAttributeValues[":sk_val"] = attributeValueFromInterface(*sk)
+		expressionAttributeNames["#sk"] = *skName
+		keyConditionExpressionParts = append(keyConditionExpressionParts, "#sk = :sk_val")
 	} else if skName != nil && skRange != nil && len(*skRange) == 2 {
-		queryInput.KeyConditionExpression = aws.String(fmt.Sprintf("%s = :pk_val AND %s BETWEEN :sk_start AND :sk_end", pkName, *skName))
-		queryInput.ExpressionAttributeValues[":sk_start"] = &types.AttributeValueMemberS{Value: (*skRange)[0]}
-		queryInput.ExpressionAttributeValues[":sk_end"] = &types.AttributeValueMemberS{Value: (*skRange)[1]}
-		queryInput.ExpressionAttributeNames["#sk"] = *skName
+		expressionAttributeValues[":sk_start"] = attributeValueFromInterface((*skRange)[0])
+		expressionAttributeValues[":sk_end"] = attributeValueFromInterface((*skRange)[1])
+		expressionAttributeNames["#sk"] = *skName
+		keyConditionExpressionParts = append(keyConditionExpressionParts, "#sk BETWEEN :sk_start AND :sk_end")
 	}
 
 	if lsiName != nil && lsiValue != nil {
+		expressionAttributeValues[":lsi_val"] = attributeValueFromInterface(*lsiValue)
+		expressionAttributeNames["#lsi"] = *lsiName
+		keyConditionExpressionParts = append(keyConditionExpressionParts, "#lsi = :lsi_val")
 		queryInput.IndexName = aws.String(*lsiName)
-		queryInput.KeyConditionExpression = aws.String(fmt.Sprintf("%s = :lsi_val", *lsiName))
-		queryInput.ExpressionAttributeValues[":lsi_val"] = &types.AttributeValueMemberS{Value: *lsiValue}
-		queryInput.ExpressionAttributeNames["#lsi"] = *lsiName // Assuming LSI name is also an attribute name
-		if queryInput.KeyConditionExpression == nil {
-			queryInput.KeyConditionExpression = aws.String(fmt.Sprintf("%s = :pk_val", pkName))
-			queryInput.ExpressionAttributeValues = map[string]types.AttributeValue{
-				":pk_val": &types.AttributeValueMemberS{Value: pk},
-			}
-			queryInput.ExpressionAttributeNames = map[string]string{
-				"#pk": pkName,
-			}
-		}
-		queryInput.KeyConditionExpression = aws.String(fmt.Sprintf("%s = :pk_val AND %s = :lsi_val", pkName, *lsiName))
-		queryInput.ExpressionAttributeValues[":lsi_val"] = &types.AttributeValueMemberS{Value: *lsiValue}
-		queryInput.ExpressionAttributeNames["#lsi"] = *lsiName
+	}
+
+	if len(keyConditionExpressionParts) > 0 {
+		queryInput.KeyConditionExpression = aws.String(strings.Join(keyConditionExpressionParts, " AND "))
+		queryInput.ExpressionAttributeValues = expressionAttributeValues
+		queryInput.ExpressionAttributeNames = expressionAttributeNames
+	} else {
+		return false, nil, fmt.Errorf("no key condition provided")
 	}
 
 	if len(projectedKeys) > 0 {
@@ -218,10 +214,14 @@ func (dt *DynamoTable) Scan(ctx context.Context, filterExpression string, expres
 	if filterExpression != "" {
 		scanInput.FilterExpression = aws.String(filterExpression)
 		expressionAttributeValues := make(map[string]types.AttributeValue)
+		expressionAttributeNames := make(map[string]string)
 		for key, val := range expressionValues {
-			expressionAttributeValues[key] = attributeValueFromInterface(val)
+			placeholder := fmt.Sprintf(":%s_val", strings.ReplaceAll(key, "#", ""))
+			expressionAttributeValues[placeholder] = attributeValueFromInterface(val)
+			expressionAttributeNames["#"+key] = key
 		}
 		scanInput.ExpressionAttributeValues = expressionAttributeValues
+		scanInput.ExpressionAttributeNames = expressionAttributeNames
 	}
 
 	var items []map[string]types.AttributeValue
@@ -243,6 +243,7 @@ func (dt *DynamoTable) Scan(ctx context.Context, filterExpression string, expres
 			break
 		}
 		lastEvaluatedKey = output.LastEvaluatedKey
+		scanInput.ExclusiveStartKey = nil // Reset for the next iteration
 	}
 
 	return true, items, nil
