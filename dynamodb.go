@@ -153,9 +153,9 @@ func (dt *DynamoTable) BuildConditionExpression(attribute string, operator strin
 func (dt *DynamoTable) Filter(ctx context.Context, pkName string, pk string, skName *string, sk *string, skRange *[]string, lsiName *string, lsiValue *string, projectedKeys []string) (bool, []map[string]types.AttributeValue, error) {
 	queryInput := &dynamodb.QueryInput{
 		TableName:              aws.String(dt.tableName),
-		KeyConditionExpression: aws.String(fmt.Sprintf("%s = :pk_val", pkName)),
+		KeyConditionExpression: aws.String(fmt.Sprintf("%s = :%s", pkName, pk)),
 		ExpressionAttributeValues: map[string]types.AttributeValue{
-			":pk_val": &types.AttributeValueMemberS{Value: pk},
+			fmt.Sprintf(":%s", pkName): &types.AttributeValueMemberS{Value: pk},
 		},
 		ExpressionAttributeNames: map[string]string{
 			"#pk": pkName,
