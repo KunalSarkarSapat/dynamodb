@@ -14,7 +14,6 @@ import (
 type DynamoTable struct {
 	client    *dynamodb.Client
 	tableName string
-	table     *dynamodb.Table
 }
 
 func NewDynamoTable(tableName string, regionName string) (*DynamoTable, error) {
@@ -24,15 +23,10 @@ func NewDynamoTable(tableName string, regionName string) (*DynamoTable, error) {
 	}
 
 	client := dynamodb.NewFromConfig(cfg)
-	table := &dynamodb.Table{
-		Name:   aws.String(tableName),
-		Client: client,
-	}
 
 	return &DynamoTable{
 		client:    client,
 		tableName: tableName,
-		table:     table,
 	}, nil
 }
 
@@ -200,6 +194,9 @@ func (dt *DynamoTable) Filter(ctx context.Context, pkName string, pk string, skN
 
 	if len(projectedKeys) > 0 {
 		queryInput.ProjectionExpression = aws.String(strings.Join(projectedKeys, ", "))
+		if queryInput.ExpressionAttributeNames == nil {
+			queryInput.ExpressionAttributeNames = make(map[string]string)
+		}
 		for _, key := range projectedKeys {
 			queryInput.ExpressionAttributeNames["#"+key] = key
 		}
@@ -249,4 +246,22 @@ func (dt *DynamoTable) Scan(ctx context.Context, filterExpression string, expres
 	}
 
 	return true, items, nil
+}
+
+// Helper function to create AttributeValue from interface
+func attributeValueFromInterface(v interface{}) types.AttributeValue {
+	switch val := v.(type) {
+	case string:
+		return &types.AttributeValueMemberS{Value: val}
+	case int64:
+		return &types.AttributeValueMemberN{Value: fmt.Sprintf("%d", val)}
+	case int:
+		return &types.AttributeValueMemberN{Value: fmt.Sprintf("%d", val)}
+	case float64:
+		return &types.AttributeValueMemberN{Value: fmt.Sprintf("%f", val)}
+	case bool:
+		return &types.AttributeValueMemberBOOL{Value: val}
+	default:
+		return &types.AttributeValueMemberS{Value: fmt.Sprintf("%v", v)}
+	}
 }
